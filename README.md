@@ -195,6 +195,18 @@ tests in one command.
 Run `Get-Help ./r.ps1 -Full` for every parameter (`-EventsFile`,
 `-LogLevel`, `-Model`, `-SkipTests`, ...).
 
+> **Windows note:** LLVM 21.1.1 has a real bug that OOMs parsing MSVC's
+> C++23 STL headers on trivial files -- confirmed on both `clang++` and
+> `clang-cl` driver modes, so switching driver mode alone doesn't fix it.
+> If you hit this, downgrade LLVM to a mature release (18.1.8 is a safe
+> bet): `winget uninstall --id LLVM.LLVM` then
+> `winget install --id LLVM.LLVM --version 18.1.8 -e`, reopen your
+> terminal, confirm with `clang --version`. `r.ps1` defaults to
+> `-Compiler clang-cl` on Windows either way (still clang, still Ninja).
+> If you'd rather drop clang entirely, `-Compiler msvc` switches to
+> `cl.exe` + Ninja (auto-imports the VS developer environment so you
+> don't need a separate dev shell).
+
 ## Build
 
 Requires CMake >= 3.24 and a C++23 compiler.

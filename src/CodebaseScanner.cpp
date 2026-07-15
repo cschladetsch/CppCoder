@@ -9,6 +9,29 @@ namespace fs = std::filesystem;
 
 namespace cppcoder {
 
+namespace {
+
+// fs::path iteration splits on the platform's native separator
+// automatically, so this works whether the path uses '/' (Linux/macOS)
+// or '\' (Windows) -- unlike a substring search for "/.git/", which
+// silently never matches on Windows and would let excluded directories
+// through unfiltered.
+bool HasExcludedComponent(const fs::path& p) {
+    for (const auto& part : p) {
+        if (part == ".git" || part == "build") return true;
+    }
+    return false;
+}
+
+// Relative paths from fs::relative() use native separators (backslash
+// on Windows). Every consumer of these strings -- tests, the JSONL event
+// schema, the web UI, target_area matching against Task areas -- expects
+// forward-slash paths. std::filesystem::path::generic_string() is the
+// standard, portable way to get that regardless of platform.
+std::string ToPortablePath(const fs::path& p) { return p.generic_string(); }
+
+}  // namespace
+
 CodebaseScanner::CodebaseScanner(fs::path root, std::vector<std::string> extensions)
     : root_(std::move(root)), extensions_(std::move(extensions)) {}
 
@@ -31,8 +54,7 @@ ScanResult CodebaseScanner::Scan(const std::string& targetArea, std::size_t toke
              it != fs::recursive_directory_iterator(); ++it) {
             if (ec) break;
             const auto& entry = *it;
-            if (entry.path().string().find("/.git/") != std::string::npos) continue;
-            if (entry.path().string().find("/build/") != std::string::npos) continue;
+            if (HasExcludedComponent(entry.path())) continue;
             if (entry.is_regular_file(ec) && HasTrackedExtension(entry.path())) {
                 candidates.push_back(entry.path());
             }
@@ -49,7 +71,7 @@ ScanResult CodebaseScanner::Scan(const std::string& targetArea, std::size_t toke
         contentStream << in.rdbuf();
         std::string content = contentStream.str();
 
-        std::string relPath = fs::relative(file, root_, ec).string();
+        std::string relPath = ToPortablePath(fs::relative(file, root_, ec));
         std::string header = "\n// ==== " + relPath + " ====\n";
         std::size_t entryTokens = EstimateTokens(header) + EstimateTokens(content);
 
@@ -77,8 +99,7 @@ std::vector<std::string> CodebaseScanner::FindFilesMatchingKeyword(const std::st
          it != fs::recursive_directory_iterator(); ++it) {
         if (ec) break;
         const auto& entry = *it;
-        if (entry.path().string().find("/.git/") != std::string::npos) continue;
-        if (entry.path().string().find("/build/") != std::string::npos) continue;
+        if (HasExcludedComponent(entry.path())) continue;
         if (!entry.is_regular_file(ec) || !HasTrackedExtension(entry.path())) continue;
 
         std::ifstream in(entry.path(), std::ios::binary);
@@ -94,7 +115,7 @@ std::vector<std::string> CodebaseScanner::FindFilesMatchingKeyword(const std::st
         };
 
         if (lowerFind(content, keyword) || lowerFind(entry.path().filename().string(), keyword)) {
-            matches.push_back(fs::relative(entry.path(), root_, ec).string());
+            matches.push_back(ToPortablePath(fs::relative(entry.path(), root_, ec)));
             if (matches.size() >= maxResults) break;
         }
     }
