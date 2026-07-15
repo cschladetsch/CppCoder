@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CppCoder — Research Task Graph</title>
+<style>
+  :root {
+    --bg: #05070d;
+    --bg-grid: #070a12;
+    --panel: #0b0f1a;
+    --panel-2: #0d1220;
+    --border: #1b2436;
+    --border-soft: #141b2a;
+    --text: #e7ecf5;
+    --muted: #7c8aa5;
+    --dim: #4b5875;
+    --blue: #3b82f6;
+    --blue-bright: #63a4ff;
+    --blue-soft: rgba(59, 130, 246, 0.14);
+    --green: #22c55e;
+    --green-bright: #4ade80;
+    --green-soft: rgba(34, 197, 94, 0.14);
+    --red: #ef4444;
+    --red-soft: rgba(239, 68, 68, 0.12);
+    --gray: #3d4a63;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-image:
+      radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.07), transparent 55%),
+      radial-gradient(ellipse at 85% 15%, rgba(34,197,94,0.05), transparent 50%);
+    min-height: 100vh;
+  }
+
+  .wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 28px 28px 64px;
+  }
+
+  /* ---------- Header ---------- */
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--blue-bright);
+    background: var(--blue-soft);
+    border: 1px solid rgba(59,130,246,0.35);
+    padding: 5px 10px;
+    border-radius: 5px;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-size: clamp(22px, 3vw, 32px);
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 14px 0 4px;
+    line-height: 1.15;
+  }
+
+  .subtitle {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 22px;
+  }
+
+  /* ---------- Controls ---------- */
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 22px;
+  }
+
+  button {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  button:hover { border-color: var(--blue); background: rgba(59,130,246,0.08); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--blue-bright); outline-offset: 2px; }
+  button.primary {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+  }
+  button.primary:hover { background: var(--blue-bright); border-color: var(--blue-bright); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  input[type="file"] { display: none; }
+
+  .speed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .speed input[type="range"] { width: 100px; accent-color: var(--blue); }
+
+  .status {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--gray);
+  }
+  .status.running .dot { background: var(--blue-bright); animation: pulse 1.1s ease-in-out infinite; }
+  .status.done .dot { background: var(--green-bright); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(99,164,255,0.5); }
+    50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(99,164,255,0); }
+  }
+
+  /* ---------- Grid layout ---------- */
+
+  .grid {
+    display: grid;
+    grid-template-columns: 260px 1fr 220px;
+    gap: 14px;
+    align-items: start;
+  }
+
+  .col-left { display: flex; flex-direction: column; gap: 14px; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 12px;
+  }
+  .panel-title .glyph {
+    width: 15px; height: 15px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); border-radius: 4px;
+    color: var(--blue-bright); font-size: 10px;
+  }
+
+  .question-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .question-text::before { content: "“"; color: var(--dim); }
+  .question-text::after { content: "”"; color: var(--dim); }
+  .question-placeholder { color: var(--dim); font-style: italic; }
+
+  .keyword-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .keyword-chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 5px;
+    background: var(--blue-soft);
+    border: 1px solid rgba(59,130,246,0.3);
+    color: var(--blue-bright);
+    opacity: 0;
+    animation: chipIn 0.3s ease forwards;
+  }
+  @keyframes chipIn { from { opacity: 0; transform: translateY(3px);} to { opacity: 1; transform: translateY(0);} }
+
+  /* ---------- Graph panel ---------- */
+
+  .graph-panel {
+    min-height: 560px;
+    position: relative;
+    overflow: hidden;
+  }
+  .graph-svg { width: 100%; height: 560px; display: block; }
+
+  .node-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    fill: var(--muted);
+  }
+  .node-label.current { fill: var(--blue-bright); font-weight: 600; }
+  .node-label.answer { fill: var(--green-bright); font-weight: 700; }
+
+  .current-task-callout {
+    position: absolute;
+    top: 16px;
+    right: 18px;
+    text-align: right;
+    max-width: 240px;
+    pointer-events: none;
+  }
+  .current-task-callout .k { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--blue-bright); }
+  .current-task-callout .v { font-family: var(--mono); font-size: 12px; color: var(--text); margin-top: 3px; }
+
+  .answer-callout {
+    position: absolute;
+    left: 16px;
+    bottom: 16px;
+    max-width: 320px;
+    background: var(--green-soft);
+    border: 1px solid rgba(34,197,94,0.4);
+    border-radius: 8px;
+    padding: 10px 12px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  .answer-callout.show { opacity: 1; transform: translateY(0); }
+  .answer-callout .k { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--green-bright); }
+  .answer-callout .v { font-size: 13px; color: var(--text); margin-top: 4px; line-height: 1.4; }
+
+  /* ---------- Legend ---------- */
+
+  .legend-item {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 12px; color: var(--muted);
+    padding: 5px 0;
+  }
+  .legend-swatch {
+    width: 11px; height: 11px; border-radius: 50%;
+    flex-shrink: 0;
+    border: 1.5px solid transparent;
+  }
+  .sw-completed { background: var(--blue); }
+  .sw-current { background: var(--blue-bright); box-shadow: 0 0 8px rgba(99,164,255,0.8); }
+  .sw-accepted { background: var(--green); }
+  .sw-unexplored { background: transparent; border-color: var(--gray); }
+  .sw-rejected { background: transparent; }
+
+  /* ---------- Codebase + pipeline row ---------- */
+
+  .lower-grid {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .code-tree {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.75;
+    color: var(--dim);
+    white-space: pre;
+  }
+  .code-tree .seen { color: var(--blue-bright); }
+  .code-tree .answer-file { color: var(--green-bright); font-weight: 700; }
+
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    position: relative;
+  }
+  .pipe-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 13px 14px;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  .pipe-card.active {
+    border-color: var(--blue);
+    background: var(--blue-soft);
+  }
+  .pipe-card .icon {
+    width: 22px; height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--blue-bright);
+    font-size: 12px;
+    margin-bottom: 9px;
+  }
+  .pipe-card .name {
+    font-size: 12.5px; font-weight: 650; margin-bottom: 3px;
+  }
+  .pipe-card .desc {
+    font-size: 11px; color: var(--muted); line-height: 1.4;
+  }
+  .pipe-arrow {
+    position: absolute;
+    top: 33px;
+    font-family: var(--mono);
+    color: var(--dim);
+    font-size: 14px;
+  }
+  .pipe-loop {
+    grid-column: 1 / -1;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    text-align: center;
+    padding-top: 6px;
+    letter-spacing: 0.06em;
+  }
+
+  /* ---------- Responsive ---------- */
+
+  @media (max-width: 980px) {
+    .grid { grid-template-columns: 1fr; }
+    .lower-grid { grid-template-columns: 1fr; }
+    .pipeline { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="eyebrow">Part 2 · Sustainable Research Through Iterative Tasks</span>
+  <h1>Sustainable Research for a Large C++ Codebase with a Small Local LLM</h1>
+  <p class="subtitle">CppCoder Research Engine — live task graph</p>
+
+  <div class="controls">
+    <button class="primary" id="btnDemo">▶ Play demo</button>
+    <button id="btnLoad">Load events file (.jsonl)</button>
+    <input type="file" id="fileInput" accept=".jsonl,.json,.log,.txt">
+    <button id="btnReset">Reset</button>
+    <div class="speed">
+      <span>Speed</span>
+      <input type="range" id="speedRange" min="1" max="10" value="5">
+    </div>
+    <div class="status" id="statusBar"><span class="dot"></span><span id="statusText">Idle — load a run or play the demo</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="col-left">
+      <div class="panel">
+        <div class="panel-title"><span class="glyph">?</span>Question</div>
+        <div class="question-text" id="questionText"><span class="question-placeholder">waiting for a run…</span></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title"><span class="glyph">⌕</span>Keyword extraction</div>
+        <div class="keyword-list" id="keywordList"></div>
+      </div>
+    </div>
+
+    <div class="panel graph-panel">
+      <div class="panel-title">Research task graph</div>
+      <svg class="graph-svg" id="graphSvg" viewBox="0 0 900 540" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="current-task-callout" id="currentCallout" style="display:none">
+        <div class="k">Current task</div>
+        <div class="v" id="currentCalloutText"></div>
+      </div>
+      <div class="answer-callout" id="answerCallout">
+        <div class="k">Answer found</div>
+        <div class="v" id="answerCalloutText"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Legend</div>
+      <div class="legend-item"><span class="legend-swatch sw-completed"></span>Explored task (completed)</div>
+      <div class="legend-item"><span class="legend-swatch sw-current"></span>Current task (in progress)</div>
+      <div class="legend-item"><span class="legend-swatch sw-accepted"></span>Accepted direction</div>
+      <div class="legend-item"><span class="legend-swatch sw-unexplored"></span>Unexplored</div>
+      <div class="legend-item"><span class="legend-swatch sw-rejected">✕</span>Rejected by judge</div>
+    </div>
+  </div>
+
+  <div class="lower-grid">
+    <div class="panel">
+      <div class="panel-title">Codebase (abstracted)</div>
+      <div class="code-tree" id="codeTree">/src
+  (load a run to populate)</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Pipeline</div>
+      <div class="pipeline">
+        <div class="pipe-card" id="pipeQueue">
+          <div class="icon">≡</div>
+          <div class="name">Task queue</div>
+          <div class="desc">Prioritized research tasks, one area each</div>
+        </div>
+        <div class="pipe-card" id="pipeWorkers">
+          <div class="icon">⚙</div>
+          <div class="name">Workers</div>
+          <div class="desc">Execute tasks and collect findings</div>
+        </div>
+        <div class="pipe-card" id="pipeJudge">
+          <div class="icon">⚖</div>
+          <div class="name">Judge</div>
+          <div class="desc">Filter findings and directions</div>
+        </div>
+        <div class="pipe-card" id="pipeNewTasks">
+          <div class="icon">⑂</div>
+          <div class="name">New tasks</div>
+          <div class="desc">Add relevant directions back to the queue</div>
+        </div>
+        <div class="pipe-loop">↩ new tasks re-enter the queue until it drains or a limit is hit</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const SVG_W = 900, SVG_H = 540;
+  const svg = document.getElementById("graphSvg");
+  const NS = "http://www.w3.org/2000/svg";
+
+  // ---------------- Background decorative graph ----------------
+  // A dim, static field of dots/lines suggesting "the rest of the
+  // codebase" the engine hasn't touched -- the traversed path is drawn
+  // brightly on top of it.
+
+  function seededRandom(seed) {
+    let s = seed;
+    return function () {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+
+  function buildBackground() {
+    const rnd = seededRandom(42);
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("opacity", "0.55");
+    const pts = [];
+    for (let i = 0; i < 90; i++) {
+      pts.push([rnd() * SVG_W, rnd() * SVG_H]);
+    }
+    // faint connecting lines to nearby points
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1];
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 70 && rnd() > 0.55) {
+          const line = document.createElementNS(NS, "line");
+          line.setAttribute("x1", pts[i][0]); line.setAttribute("y1", pts[i][1]);
+          line.setAttribute("x2", pts[j][0]); line.setAttribute("y2", pts[j][1]);
+          line.setAttribute("stroke", "#1b2436");
+          line.setAttribute("stroke-width", "1");
+          g.appendChild(line);
+        }
+      }
+    }
+    for (const [x, y] of pts) {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 2.4);
+      c.setAttribute("fill", "#2a3550");
+      g.appendChild(c);
+    }
+    svg.appendChild(g);
+  }
+
+  // ---------------- Live graph state ----------------
+
+  const state = {
+    nodes: new Map(),   // id -> {id, parentId, depth, label, status, x, y}
+    edges: [],          // {from, to, status}
+    order: [],          // ids in creation order, for layered layout
+  };
+
+  let liveLayer = null;
+  function resetGraphLayer() {
+    if (liveLayer) svg.removeChild(liveLayer);
+    liveLayer = document.createElementNS(NS, "g");
+    svg.appendChild(liveLayer);
+    state.nodes.clear();
+    state.edges = [];
+    state.order = [];
+  }
+
+  const COLORS = {
+    queued: "#3d4a63",
+    current: "#63a4ff",
+    explored: "#3b82f6",
+    answer: "#4ade80",
+    rejected: "#ef4444",
+    root: "#e7ecf5",
+  };
+
+  function addNode(id, parentId, depth, label, status) {
+    if (state.nodes.has(id)) {
+      const n = state.nodes.get(id);
+      n.status = status;
+      return n;
+    }
+    const n = { id, parentId: parentId || null, depth, label, status };
+    state.nodes.set(id, n);
+    state.order.push(id);
+    if (parentId && state.nodes.has(parentId)) {
+      state.edges.push({ from: parentId, to: id });
+    }
+    return n;
+  }
+
+  function layout() {
+    const byDepth = new Map();
+    for (const id of state.order) {
+      const n = state.nodes.get(id);
+      if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
+      byDepth.get(n.depth).push(n);
+    }
+    const maxDepth = Math.max(0, ...byDepth.keys());
+    const dx = maxDepth > 0 ? Math.min(120, (SVG_W - 120) / maxDepth) : 120;
+
+    // Barycenter-ish vertical placement: order each depth by parent y.
+    for (let d = 0; d <= maxDepth; d++) {
+      const layer = byDepth.get(d) || [];
+      layer.sort((a, b) => {
+        const pa = a.parentId && state.nodes.get(a.parentId);
+        const pb = b.parentId && state.nodes.get(b.parentId);
+        const ya = pa ? pa.y : SVG_H / 2;
+        const yb = pb ? pb.y : SVG_H / 2;
+        return ya - yb;
+      });
+      const spacing = Math.min(46, (SVG_H - 80) / Math.max(1, layer.length));
+      const total = (layer.length - 1) * spacing;
+      const startY = SVG_H / 2 - total / 2;
+      layer.forEach((n, i) => {
+        n.x = 60 + d * dx;
+        n.y = layer.length === 1 && d === 0 ? SVG_H / 2 : startY + i * spacing;
+      });
+    }
+  }
+
+  function statusColor(status) {
+    switch (status) {
+      case "current": return COLORS.current;
+      case "queued": return COLORS.queued;
+      case "explored": return COLORS.explored;
+      case "answer": return COLORS.answer;
+      case "rejected": return COLORS.rejected;
+      case "root": return COLORS.root;
+      default: return COLORS.queued;
+    }
+  }
+
+  function render() {
+    layout();
+    while (liveLayer.firstChild) liveLayer.removeChild(liveLayer.firstChild);
+
+    // edges first (under nodes)
+    for (const e of state.edges) {
+      const a = state.nodes.get(e.from), b = state.nodes.get(e.to);
+      if (!a || !b) continue;
+      const path = document.createElementNS(NS, "path");
+      const mx = (a.x + b.x) / 2;
+      path.setAttribute("d", `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`);
+      path.setAttribute("fill", "none");
+      const rejected = b.status === "rejected";
+      path.setAttribute("stroke", rejected ? "rgba(239,68,68,0.5)" : (b.status === "answer" ? "rgba(74,222,128,0.6)" : "rgba(59,130,246,0.45)"));
+      path.setAttribute("stroke-width", b.status === "answer" ? "2.5" : "1.6");
+      if (rejected || b.status === "queued") path.setAttribute("stroke-dasharray", "3,4");
+      liveLayer.appendChild(path);
+    }
+
+    // nodes
+    for (const id of state.order) {
+      const n = state.nodes.get(id);
+      const color = statusColor(n.status);
+      const grp = document.createElementNS(NS, "g");
+
+      if (n.status === "current") {
+        const halo = document.createElementNS(NS, "circle");
+        halo.setAttribute("cx", n.x); halo.setAttribute("cy", n.y); halo.setAttribute("r", 13);
+        halo.setAttribute("fill", "none");
+        halo.setAttribute("stroke", color);
+        halo.setAttribute("stroke-width", "1.5");
+        halo.setAttribute("opacity", "0.5");
+        const anim = document.createElementNS(NS, "animate");
+        anim.setAttribute("attributeName", "r");
+        anim.setAttribute("values", "8;15;8");
+        anim.setAttribute("dur", "1.4s");
+        anim.setAttribute("repeatCount", "indefinite");
+        halo.appendChild(anim);
+        const anim2 = document.createElementNS(NS, "animate");
+        anim2.setAttribute("attributeName", "opacity");
+        anim2.setAttribute("values", "0.6;0.05;0.6");
+        anim2.setAttribute("dur", "1.4s");
+        anim2.setAttribute("repeatCount", "indefinite");
+        halo.appendChild(anim2);
+        grp.appendChild(halo);
+      }
+
+      if (n.status === "answer") {
+        const ring = document.createElementNS(NS, "circle");
+        ring.setAttribute("cx", n.x); ring.setAttribute("cy", n.y); ring.setAttribute("r", 12);
+        ring.setAttribute("fill", "none");
+        ring.setAttribute("stroke", color);
+        ring.setAttribute("stroke-width", "1.5");
+        ring.setAttribute("opacity", "0.55");
+        grp.appendChild(ring);
+      }
+
+      if (n.status === "rejected") {
+        const s = 4.5;
+        for (const rot of [1, -1]) {
+          const l = document.createElementNS(NS, "line");
+          l.setAttribute("x1", n.x - s); l.setAttribute("y1", n.y - s * rot);
+          l.setAttribute("x2", n.x + s); l.setAttribute("y2", n.y + s * rot);
+          l.setAttribute("stroke", color);
+          l.setAttribute("stroke-width", "2");
+          l.setAttribute("stroke-linecap", "round");
+          grp.appendChild(l);
+        }
+      } else {
+        const c = document.createElementNS(NS, "circle");
+        c.setAttribute("cx", n.x); c.setAttribute("cy", n.y);
+        c.setAttribute("r", n.status === "queued" ? 5 : 7);
+        c.setAttribute("fill", n.status === "queued" ? "transparent" : color);
+        c.setAttribute("stroke", color);
+        c.setAttribute("stroke-width", n.status === "queued" ? 1.4 : 0);
+        grp.appendChild(c);
+      }
+
+      liveLayer.appendChild(grp);
+    }
+  }
+
+  // ---------------- Side-panel wiring ----------------
+
+  const questionText = document.getElementById("questionText");
+  const keywordList = document.getElementById("keywordList");
+  const currentCallout = document.getElementById("currentCallout");
+  const currentCalloutText = document.getElementById("currentCalloutText");
+  const answerCallout = document.getElementById("answerCallout");
+  const answerCalloutText = document.getElementById("answerCalloutText");
+  const codeTree = document.getElementById("codeTree");
+  const statusBar = document.getElementById("statusBar");
+  const statusText = document.getElementById("statusText");
+
+  const pipeCards = {
+    queued: document.getElementById("pipeQueue"),
+    workers: document.getElementById("pipeWorkers"),
+    judge: document.getElementById("pipeJudge"),
+    newTasks: document.getElementById("pipeNewTasks"),
+  };
+
+  function pulsePipe(key) {
+    Object.values(pipeCards).forEach((c) => c.classList.remove("active"));
+    if (pipeCards[key]) pipeCards[key].classList.add("active");
+  }
+
+  const seenAreas = new Set();
+
+  function shortLabel(area) {
+    if (!area) return "";
+    const parts = area.replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1] || area;
+  }
+
+  function updateCodeTree() {
+    if (seenAreas.size === 0) {
+      codeTree.textContent = "/src\n  (load a run to populate)";
+      return;
+    }
+    const files = [...seenAreas].sort();
+    const tree = new Map(); // dir -> [files]
+    for (const f of files) {
+      const clean = f.replace(/^\(.*?\)$/, "").trim();
+      if (!clean) continue;
+      const parts = clean.replace(/\\/g, "/").split("/");
+      const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "/";
+      const file = parts[parts.length - 1];
+      if (!tree.has(dir)) tree.set(dir, []);
+      tree.get(dir).push(file);
+    }
+    let out = "";
+    for (const [dir, fs] of [...tree.entries()].sort()) {
+      out += (dir === "/" ? "/" : "/" + dir) + "\n";
+      for (const f of fs) out += "  " + f + "\n";
+    }
+    codeTree.textContent = out || "/src\n  (load a run to populate)";
+  }
+
+  // ---------------- Event application ----------------
+
+  let answerNodeIds = [];
+  const rawDirectionsByTask = new Map();
+
+  function applyEvent(evt) {
+    switch (evt.event) {
+      case "question": {
+        questionText.innerHTML = "";
+        questionText.textContent = evt.question;
+        addNode("__question__", null, -1, "question", "root");
+        break;
+      }
+      case "keywords_extracted": {
+        keywordList.innerHTML = "";
+        (evt.keywords || []).forEach((k, i) => {
+          const chip = document.createElement("span");
+          chip.className = "keyword-chip";
+          chip.style.animationDelay = (i * 60) + "ms";
+          chip.textContent = k;
+          keywordList.appendChild(chip);
+        });
+        pulsePipe("queued");
+        break;
+      }
+      case "task_queued": {
+        const parent = evt.parent_id || "__question__";
+        const parentNode = state.nodes.get(parent);
+        const depth = parentNode ? parentNode.depth + 1 : 0;
+        addNode(evt.id, parent, depth, shortLabel(evt.target_area), "queued");
+        pulsePipe("newTasks");
+        render();
+        break;
+      }
+      case "task_started": {
+        const n = state.nodes.get(evt.id);
+        if (n) n.status = "current";
+        seenAreas.add(evt.target_area);
+        updateCodeTree();
+        currentCallout.style.display = "block";
+        currentCalloutText.textContent = shortLabel(evt.target_area) || evt.target_area;
+        pulsePipe("workers");
+        render();
+        break;
+      }
+      case "worker_result": {
+        rawDirectionsByTask.set(evt.id, evt.directions || []);
+        pulsePipe("workers");
+        break;
+      }
+      case "judge_result": {
+        const n = state.nodes.get(evt.id);
+        if (n) n.status = "explored";
+        pulsePipe("judge");
+
+        // Directions the worker proposed but the judge discarded never
+        // become real tasks -- show them as terminal red-X stubs so the
+        // graph reflects what the judge actually pruned.
+        const raw = rawDirectionsByTask.get(evt.id) || [];
+        const keptIds = new Set((evt.kept_directions || []).map((d) => d.id));
+        const parentDepth = n ? n.depth : 0;
+        for (const d of raw) {
+          if (!keptIds.has(d.id)) {
+            addNode(d.id, evt.id, parentDepth + 1, shortLabel(d.target_area), "rejected");
+          }
+        }
+        render();
+        break;
+      }
+      case "answer_progress": {
+        const n = state.nodes.get(evt.id);
+        if (n) {
+          n.status = "answer";
+          answerNodeIds.push(evt.id);
+          // walk parents up to root, mark them green too
+          let cur = n;
+          while (cur && cur.parentId && state.nodes.has(cur.parentId)) {
+            const p = state.nodes.get(cur.parentId);
+            if (p.status !== "root" && p.status !== "answer") p.status = "answer";
+            cur = p;
+          }
+        }
+        render();
+        break;
+      }
+      case "answer_found": {
+        answerCallout.classList.add("show");
+        answerCalloutText.textContent = evt.answer;
+        currentCallout.style.display = "none";
+        break;
+      }
+      case "complete": {
+        statusBar.className = "status done";
+        statusText.textContent = evt.answered
+          ? `Done — answered in ${evt.iterations} iteration(s), ${(evt.wall_clock_ms / 1000).toFixed(1)}s`
+          : `Done — no answer (${evt.reason})`;
+        currentCallout.style.display = "none";
+        Object.values(pipeCards).forEach((c) => c.classList.remove("active"));
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // ---------------- Playback engine ----------------
+
+  let queue = [];
+  let playing = false;
+  let timer = null;
+
+  function baseDelay() {
+    const speed = Number(document.getElementById("speedRange").value);
+    // speed 1 (slow) -> 1400ms, speed 10 (fast) -> ~90ms
+    return Math.round(1500 / speed);
+  }
+
+  function stepPlayback() {
+    if (!queue.length) {
+      playing = false;
+      return;
+    }
+    const evt = queue.shift();
+    applyEvent(evt);
+    if (queue.length) {
+      timer = setTimeout(stepPlayback, baseDelay());
+    } else {
+      playing = false;
+    }
+  }
+
+  function startPlayback(events) {
+    resetAll(false);
+    queue = events.slice();
+    playing = true;
+    statusBar.className = "status running";
+    statusText.textContent = "Running…";
+    stepPlayback();
+  }
+
+  function resetAll(resetStatusText) {
+    clearTimeout(timer);
+    playing = false;
+    queue = [];
+    resetGraphLayer();
+    questionText.innerHTML = '<span class="question-placeholder">waiting for a run…</span>';
+    keywordList.innerHTML = "";
+    currentCallout.style.display = "none";
+    answerCallout.classList.remove("show");
+    seenAreas.clear();
+    updateCodeTree();
+    answerNodeIds = [];
+    rawDirectionsByTask.clear();
+    Object.values(pipeCards).forEach((c) => c.classList.remove("active"));
+    if (resetStatusText !== false) {
+      statusBar.className = "status";
+      statusText.textContent = "Idle — load a run or play the demo";
+    }
+  }
+
+  // ---------------- JSONL loading ----------------
+
+  function parseJsonl(text) {
+    return text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        try { return JSON.parse(l); } catch (e) { return null; }
+      })
+      .filter(Boolean);
+  }
+
+  document.getElementById("btnLoad").addEventListener("click", () => {
+    document.getElementById("fileInput").click();
+  });
+  document.getElementById("fileInput").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const events = parseJsonl(String(reader.result));
+      if (!events.length) {
+        statusText.textContent = "No valid JSON-lines events found in that file.";
+        return;
+      }
+      startPlayback(events);
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById("btnReset").addEventListener("click", () => resetAll(true));
+
+  // ---------------- Demo data ----------------
+  // Mirrors a run of: ./cppcoder --question "How is encryption key
+  // derived for PDF documents?" --codebase . --events-file demo.jsonl
+
+  function buildDemoEvents() {
+    const events = [];
+    const push = (e) => events.push(e);
+
+    push({ event: "question", question: "How is encryption key derived for PDF documents?" });
+    push({ event: "keywords_extracted", keywords: ["encryption", "pdf", "key", "derive"] });
+    push({ event: "task_queued", id: "seed", parent_id: "", target_area: "(keyword probe: 6 files)" });
+
+    // Each step: task_queued already emitted by its parent step, then
+    // started/worker/judge, mirroring exactly what main.cpp writes.
+    function runTask(id, area, outcome, summary, directions, keptIds) {
+      push({ event: "task_started", id, target_area: area });
+      push({ event: "worker_result", id, outcome, summary: summary || "", directions: directions || [], duration_ms: 900 });
+      const kept = (directions || []).filter((d) => keptIds.includes(d.id));
+      push({ event: "judge_result", id, outcome, summary: summary || "", kept_directions: kept, rejected_count: (directions || []).length - kept.length });
+      for (const d of kept) {
+        push({ event: "task_queued", id: d.id, parent_id: id, target_area: d.target_area });
+      }
+      if (outcome === "success") {
+        push({ event: "answer_progress", id, summary });
+      }
+    }
+
+    runTask("seed", "(keyword probe: 6 files)", "partial", "", [
+      { id: "n1", target_area: "src/io/stream.cpp" },
+      { id: "n2", target_area: "src/parser/document.cpp" },
+      { id: "x1", target_area: "src/io/socket.cpp" },
+    ], ["n1", "n2"]);
+
+    runTask("n1", "src/io/stream.cpp", "no_information", "", [], []);
+
+    runTask("n2", "src/parser/document.cpp", "partial", "", [
+      { id: "n3", target_area: "src/crypto/crypto.cpp" },
+      { id: "x2", target_area: "src/parser/tokenizer.cpp" },
+    ], ["n3"]);
+
+    runTask("n3", "src/crypto/crypto.cpp", "partial", "", [
+      { id: "n4", target_area: "src/crypto/pkcs7_key.cpp" },
+      { id: "x3", target_area: "src/crypto/rc4_legacy.cpp" },
+    ], ["n4"]);
+
+    runTask("n4", "src/crypto/pkcs7_key.cpp", "partial", "", [
+      { id: "n5", target_area: "src/crypto/pdf_crypto.cpp" },
+    ], ["n5"]);
+
+    runTask("n5", "src/crypto/pdf_crypto.cpp", "success",
+      "Key derivation logic in pdf_crypto.cpp", [], []);
+
+    push({
+      event: "answer_found",
+      answer: "The key for a PDF's encrypted stream is derived with a PKCS#7-padded MD5/RC4 (or AES) chain seeded from the /O and /U dictionary entries and the document ID, implemented in pdf_crypto.cpp.",
+    });
+    push({ event: "complete", answered: true, reason: "task queue drained", iterations: 6, wall_clock_ms: 41200 });
+
+    return events;
+  }
+
+  document.getElementById("btnDemo").addEventListener("click", () => {
+    startPlayback(buildDemoEvents());
+  });
+
+  // ---------------- Init ----------------
+
+  resetGraphLayer();
+  buildBackground();
+  updateCodeTree();
+})();
+</script>
+</body>
+</html>
