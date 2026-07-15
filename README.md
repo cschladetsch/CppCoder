@@ -179,16 +179,37 @@ CppCoder/
 └── external/             git submodules: CppLmmModelStore, spdlog, googletest
 ```
 
+## Quick start
+
+`r.ps1` is the single entry point (PowerShell 7+, cross-platform):
+initializes submodules if needed, configures, builds, and runs all 88
+tests in one command.
+
+```
+./r.ps1                                              # init + build + test
+./r.ps1 -Clean -Jobs 8                                # full rebuild, 8 jobs
+./r.ps1 -Question "How does the judge prune?" -Codebase .   # build, then research
+./r.ps1 -SkipBuild -OpenWeb                           # just open the task-graph UI
+```
+
+Run `Get-Help ./r.ps1 -Full` for every parameter (`-EventsFile`,
+`-LogLevel`, `-Model`, `-SkipTests`, ...).
+
 ## Build
+
+Requires CMake >= 3.24 and a C++23 compiler.
 
 ```
 cmake -B build -S .
 cmake --build build -j$(nproc)
 ```
 
-Requires `nlohmann-json3-dev` (`apt install nlohmann-json3-dev`); cpp-httplib
-is fetched via CMake FetchContent. `external/CppLmmModelStore`,
-`external/googletest`, and `external/spdlog` are git submodules:
+All dependencies are handled automatically: `nlohmann_json` and
+`cpp-httplib` are fetched via CMake FetchContent if not already present
+on the system (`find_package` is tried first, so an existing
+`nlohmann-json3-dev`/vcpkg/conan install is used instead of re-fetching).
+`external/CppLmmModelStore`, `external/googletest`, and `external/spdlog`
+are git submodules:
 
 ```
 git submodule update --init --recursive
