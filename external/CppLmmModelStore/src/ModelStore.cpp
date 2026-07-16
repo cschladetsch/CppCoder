@@ -19,6 +19,38 @@ std::string ResolveModelHomeInternal() {
   return base + "/deepseek/models";
 }
 
+// Windows forbids '<', '>', ':', '"', '|', '?', '*', and '\' inside a path
+// component -- ':' is the one that actually bites in practice, since NTFS
+// reserves it for alternate-data-stream syntax ("name:stream"). Model
+// identifiers from registries such as Ollama routinely look like
+// "llama3:8b", which POSIX filesystems accept verbatim but Windows does
+// not: ModelExists()/EnsureModelDir() would silently address an ADS (or
+// fail outright) instead of the intended directory. Sanitizing here means
+// every caller of ResolveModelPath (and therefore ModelExists and
+// EnsureModelDir, which both go through it) gets a path that behaves the
+// same on every platform.
+std::string SanitizePathComponent(std::string_view component) {
+  std::string sanitized;
+  sanitized.reserve(component.size());
+  for (char c : component) {
+    switch (c) {
+      case ':':
+      case '*':
+      case '?':
+      case '"':
+      case '<':
+      case '>':
+      case '|':
+      case '\\':
+        sanitized.push_back('_');
+        break;
+      default:
+        sanitized.push_back(c);
+    }
+  }
+  return sanitized;
+}
+
 }  // namespace
 
 std::string ModelStore::ResolveModelHome() { return ResolveModelHomeInternal(); }
@@ -28,7 +60,7 @@ std::string ModelStore::ResolveModelPath(std::string_view model_name) {
   if (!home.empty() && home.back() != '/') {
     home.push_back('/');
   }
-  return home + std::string(model_name);
+  return home + SanitizePathComponent(model_name);
 }
 
 std::optional<std::string> ModelStore::EnsureModelDir(std::string_view model_name,
