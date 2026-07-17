@@ -1,13 +1,25 @@
 # CppCoder
 
-A C++23 sustained-research engine for answering questions about a large
-codebase with a small local LLM. It implements the worker/judge/task-queue
-architecture described in *"Building a Code Assistant, Part 2: A
-Sustained Research Engine"*: rather than dumping the whole repository
-into a single context window, the question is broken into a sequence of
-bounded research tasks that a local model (via [Ollama](https://ollama.com))
-works through one at a time, with a second model pass acting as a judge
-that prunes anything off-topic before it re-enters the queue.
+A C++23 toolkit for working with a small local LLM (via [Ollama](https://ollama.com))
+against a large codebase, in two modes:
+
+- **Research mode** (`cppcoder --question ... --codebase ...`): a
+  sustained-research engine that implements the worker/judge/task-queue
+  architecture described in *"Building a Code Assistant, Part 2: A
+  Sustained Research Engine"*. Rather than dumping the whole repository
+  into a single context window, the question is broken into a sequence
+  of bounded research tasks that the model works through one at a time,
+  with a second model pass acting as a judge that prunes anything
+  off-topic before it re-enters the queue.
+- **Chat mode** (`cppcoder --serve`): a plain, "Claude for Desktop"-style
+  web chat UI backed by the same Ollama instance, with swappable models
+  and a small persisted-facts memory. See [Chat mode](#chat-mode) below.
+
+Every subfolder has its own README with more detail: [`include/cppcoder/`](include/cppcoder/README.md),
+[`src/`](src/README.md), [`tests/`](tests/README.md), [`examples/`](examples/README.md),
+[`web/`](web/README.md).
+
+## Research mode
 
 A question is answered incrementally:
 
@@ -146,6 +158,9 @@ flowchart TD
         Judge
         TaskQueue
         ResearchEngine
+        ChatServer
+        MemoryStore
+        FactExtractor
     end
 
     Worker --> OllamaClient
@@ -155,45 +170,63 @@ flowchart TD
     ResearchEngine --> Judge
     ResearchEngine --> TaskQueue
     ResearchEngine --> CodebaseScanner
+    ChatServer --> MemoryStore
+    ChatServer --> FactExtractor
+    ChatServer --> HTTPLIB[("cpp-httplib (server)")]
     core --> ModelStore
     core --> Spdlog
     core --> NJ[("nlohmann_json")]
-    OllamaClient --> HTTPLIB[("cpp-httplib")]
+    OllamaClient --> HTTPLIB2[("cpp-httplib (client)")]
 
-    CLI["cppcoder (CLI)"] --> core
+    CLI["cppcoder (CLI / --serve)"] --> core
     ReplayDemo["replay_demo"] --> NJ
     MinimalUsage["minimal_usage"] --> core
     Tests["cppcoder_tests"] --> core
     Tests --> GTest
+    ModelStoreTests["ModelStoreTests / StreamParserTests"] --> ModelStore
+    ModelStoreTests --> GTest
+
+    ChatHtml["web/chat.html"] -.->|"fetch /api/*"| CLI
+    IndexHtml["web/index.html"] -.->|"loads --events-file output"| CLI
 ```
 
 ## Repository layout
 
 ```
 CppCoder/
-├── include/cppcoder/     Public headers (Task, Finding, Worker, Judge, ...)
-├── src/                  Implementation + main.cpp (CLI entry point)
-├── tests/                88 GoogleTest cases
-├── examples/             replay_demo, minimal_usage, demo_events.jsonl
-├── web/                  index.html -- live task-graph visualizer
+├── include/cppcoder/     Public headers -- see include/cppcoder/README.md
+├── src/                  Implementation + main.cpp -- see src/README.md
+├── tests/                105 GoogleTest cases -- see tests/README.md
+├── examples/             replay_demo, minimal_usage -- see examples/README.md
+├── web/                  index.html + chat.html -- see web/README.md
 └── external/             git submodules: CppLmmModelStore, spdlog, googletest
 ```
 
 ## Quick start
 
-`r.ps1` is the single entry point (PowerShell 7+, cross-platform):
-initializes submodules if needed, configures, builds, and runs all 88
+`t.ps1` is the main entry point (PowerShell 7+, cross-platform):
+initializes submodules if needed, configures, builds, and runs all 105
 tests in one command.
 
 ```
-./r.ps1                                              # init + build + test
-./r.ps1 -Clean -Jobs 8                                # full rebuild, 8 jobs
-./r.ps1 -Question "How does the judge prune?" -Codebase .   # build, then research
-./r.ps1 -SkipBuild -OpenWeb                           # just open the task-graph UI
+./t.ps1                                              # init + build + test
+./t.ps1 -Clean -Jobs 8                                # full rebuild, 8 jobs
+./t.ps1 -Question "How does the judge prune?" -Codebase .   # build, then research
+./t.ps1 -SkipBuild -OpenWeb                           # just open the task-graph UI
+./t.ps1 -Serve                                        # build, then start the chat UI
 ```
 
-Run `Get-Help ./r.ps1 -Full` for every parameter (`-EventsFile`,
-`-LogLevel`, `-Model`, `-SkipTests`, ...).
+`r.ps1` is a thin, dedicated shortcut for the common case of just wanting
+the chat UI running -- it forwards to `t.ps1 -Serve`:
+
+```
+./r.ps1                          # build (if needed) + open http://127.0.0.1:8765/chat.html
+./r.ps1 -SkipBuild                # reuse the existing build, just serve
+./r.ps1 -Clean -ServePort 9000    # full rebuild, serve on a different port
+```
+
+Run `Get-Help ./t.ps1 -Full` (or `./r.ps1 -Full`) for every parameter
+(`-EventsFile`, `-LogLevel`, `-Model`, `-SkipTests`, `-ServeHost`, `-ServePort`, ...).
 
 > **Windows note:** LLVM 21.1.1 has a real bug that OOMs parsing MSVC's
 > C++23 STL headers on trivial files -- confirmed on both `clang++` and
@@ -201,7 +234,7 @@ Run `Get-Help ./r.ps1 -Full` for every parameter (`-EventsFile`,
 > If you hit this, downgrade LLVM to a mature release (18.1.8 is a safe
 > bet): `winget uninstall --id LLVM.LLVM` then
 > `winget install --id LLVM.LLVM --version 18.1.8 -e`, reopen your
-> terminal, confirm with `clang --version`. `r.ps1` defaults to
+> terminal, confirm with `clang --version`. `t.ps1` defaults to
 > `-Compiler clang-cl` on Windows either way (still clang, still Ninja).
 > If you'd rather drop clang entirely, `-Compiler msvc` switches to
 > `cl.exe` + Ninja (auto-imports the VS developer environment so you
@@ -230,10 +263,16 @@ git submodule update --init --recursive
 | Submodule | Purpose |
 |---|---|
 | `external/CppLmmModelStore` | Shared local-model path resolution (zero-duplication convention used across this author's other projects) |
-| `external/spdlog` | All runtime logging |
-| `external/googletest` | Test suite |
+| `external/spdlog` | All runtime logging, in this project and in CppLmmModelStore |
+| `external/googletest` | Test suite, shared between `tests/` and CppLmmModelStore's own tests |
 
-## Run
+`spdlog` and `googletest` are each added to the CMake project exactly
+once, before `external/CppLmmModelStore`; the submodule's own
+`CMakeLists.txt` checks `if(NOT TARGET spdlog::spdlog)` / `if(NOT TARGET
+GTest::gtest_main)` first and reuses whatever the parent already
+provided instead of vendoring a second copy.
+
+## Run: research mode
 
 ```
 ollama pull qwen2.5-coder:7b
@@ -254,6 +293,56 @@ ollama pull qwen2.5-coder:7b
 | `--log-level <level>` | `info` | `trace\|debug\|info\|warn\|err\|critical\|off` |
 | `--log-file <path>` | *(none)* | Also write logs to this file |
 
+## Chat mode
+
+`cppcoder --serve` (or `./r.ps1`) starts a plain conversational chat UI
+instead of a research run: a local HTTP server (`ChatServer`) serves
+`web/chat.html` and proxies every turn straight through to Ollama's own
+`/api/chat`, streaming the reply back token-by-token. No research engine
+involved -- this is a general-purpose local chat client with a model
+switcher, not a codebase-research tool.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (chat.html)
+    participant S as ChatServer
+    participant M as MemoryStore
+    participant F as FactExtractor
+    participant O as Ollama
+
+    B->>S: POST /api/chat {model, messages}
+    S->>F: ExtractFacts(latest user message)
+    F-->>S: new facts (if any)
+    S->>M: AddFact(...) for each
+    S->>M: AllFacts()
+    M-->>S: known facts
+    S->>S: prepend {role: system, content: facts} to messages
+    S->>O: POST /api/chat {model, messages, stream:true}
+    O-->>S: NDJSON stream, chunk by chunk
+    S-->>B: same NDJSON stream, forwarded live
+```
+
+Facts mentioned in chat ("my name is...", "I am NN yo", "your name
+is...") are auto-detected by `FactExtractor` and persisted by
+`MemoryStore` to `~/.models/memory.json` (or `$DEEPSEEK_MODEL_HOME/memory.json`,
+or `$CPPCODER_MEMORY_FILE`), then re-injected as a system message on
+every subsequent turn -- so the assistant remembers them across
+conversations and across model switches. The chat page has a "🧠 Memory"
+panel to view, add, or forget facts by hand (`GET`/`POST`/`DELETE
+/api/memory`).
+
+| Option | Default | Description |
+|---|---|---|
+| `--serve` | *(off)* | Start the chat server instead of researching |
+| `--serve-host <addr>` | `127.0.0.1` | Address to bind the chat server to |
+| `--serve-port <port>` | `8765` | Port to bind the chat server to |
+| `--web-root <path>` | auto-detect `./web` | Directory to serve as the chat UI |
+| `--memory-file <path>` | `~/.models/memory.json` | Facts file to persist/read |
+| `--model <name>` | `qwen2.5-coder:7b` | Default Ollama model tag (switchable per-conversation from the UI) |
+| `--host` / `--port` | `localhost` / `11434` | Ollama connection used to service `/api/models` and `/api/chat` |
+
+See [web/README.md](web/README.md) for the frontend side of this.
+
 ## Logging
 
 All runtime logging goes through [spdlog](https://github.com/gabime/spdlog)
@@ -269,8 +358,9 @@ diagnostic logging.
 
 ## Test
 
-88 tests across JSON extraction, task-queue dedup/visited logic,
-codebase scanning, and the worker/judge parsing logic. The network-facing
+105 tests in `cppcoder_tests` (this repo's own suite) plus 3 more inside
+the `external/CppLmmModelStore` submodule (`ModelStoreTests`,
+`StreamParserTests`) -- 108 total, all pure/offline. The network-facing
 parts are tested via pure functions -- `Worker::ParseWorkerResponse`,
 `Judge::ApplyJudgeResponse`, `FallbackKeywords`, `ResearchEngine::SeedInitialTasks`
 -- so none of it needs a running Ollama instance:
@@ -281,13 +371,17 @@ cd build && ctest --output-on-failure
 
 | Test file | Cases | Covers |
 |---|---|---|
-| `JsonUtilTests.cpp` | 15 | Brace/bracket extraction from model output |
+| `JsonUtilTests.cpp` | 16 | Brace/bracket extraction from model output |
 | `TypesTests.cpp` | 8 | `Task` defaults, `EstimateTokens` |
 | `TaskQueueTests.cpp` | 13 | Dedup, visited tracking, FIFO order, repeatable tasks |
-| `CodebaseScannerTests.cpp` | 14 | Recursive scan, token budgeting, `.git`/`build` exclusion, keyword search |
+| `CodebaseScannerTests.cpp` | 15 | Recursive scan, token budgeting, `.git`/`build` exclusion, keyword search |
 | `WorkerTests.cpp` | 13 | Worker JSON response parsing, malformed/prose-wrapped input |
 | `JudgeTests.cpp` | 12 | Direction pruning, summary filtering, outcome downgrade |
 | `ResearchEngineTests.cpp` | 11 | Keyword fallback, seed-task construction |
+| `MemoryStoreTests.cpp` | 9 | Persistence, case-insensitive dedup, remove, default-path resolution |
+| `FactExtractorTests.cpp` | 8 | Name/age extraction patterns, multi-fact messages, no-match cases |
+
+See [tests/README.md](tests/README.md) for more detail.
 
 ## Examples
 
@@ -318,23 +412,18 @@ cd build && ctest --output-on-failure
 
 ## Web UI
 
-`web/index.html` is a self-contained, dependency-free page that
-visualizes a research run as a task graph (question → keyword probe →
-worker/judge chain → answer), matching the architecture above.
+`web/` has two self-contained, dependency-free pages -- see
+[web/README.md](web/README.md) for full detail on both:
 
-Open it directly in a browser:
-
-- **Play demo** replays a scripted example run with no engine required.
-- **Load events file** reads the JSON-Lines output of a real run:
-
-  ```
-  ./build/src/cppcoder --question "..." --codebase /path/to/repo \
-      --events-file /tmp/run.jsonl
-  ```
-
-  then load `/tmp/run.jsonl` in the page. Nodes animate through queued →
-  current → explored/answer states as the file replays; directions the
-  judge discarded appear as red-X stubs off the task that proposed them.
+- **`index.html`** visualizes a research run as a task graph (question →
+  keyword probe → worker/judge chain → answer), matching the
+  architecture above. **Play demo** replays a scripted example with no
+  engine required; **Load events file** replays the JSON-Lines output of
+  a real `--events-file` run.
+- **`chat.html`** is the chat-mode frontend: model switcher, streaming
+  replies, and the memory panel described in [Chat mode](#chat-mode)
+  above. Served by `cppcoder --serve`, not meant to be opened directly
+  as a file (it calls back to `/api/*` on the same origin).
 
 ## License
 

@@ -8,6 +8,8 @@ add_library(cppcoder_core
     TaskQueue.cpp
     ResearchEngine.cpp
     ChatServer.cpp
+    MemoryStore.cpp
+    FactExtractor.cpp
 )
 target_include_directories(cppcoder_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cppcoder_core

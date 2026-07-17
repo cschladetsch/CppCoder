@@ -34,6 +34,7 @@ void PrintUsage(const char* argv0) {
         << "  --serve-host <addr>      Address to bind the chat server to (default: 127.0.0.1)\n"
         << "  --serve-port <port>      Port to bind the chat server to (default: 8765)\n"
         << "  --web-root <path>        Directory to serve as the chat UI (default: auto-detect ./web)\n"
+        << "  --memory-file <path>     Facts file to persist/read (default: ~/.models/memory.json)\n"
         << "\n"
         << "Shared Ollama options:\n"
         << "  --model <name>           Ollama model tag (default: qwen2.5-coder:7b)\n"
@@ -86,6 +87,7 @@ int main(int argc, char** argv) {
     std::string serveHost = "127.0.0.1";
     int servePort = 8765;
     std::string webRoot;
+    std::string memoryFilePath;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -123,6 +125,8 @@ int main(int argc, char** argv) {
             servePort = std::stoi(next("--serve-port"));
         } else if (arg == "--web-root") {
             webRoot = next("--web-root");
+        } else if (arg == "--memory-file") {
+            memoryFilePath = next("--memory-file");
         } else if (arg == "--log-level") {
             logLevel = next("--log-level");
         } else if (arg == "--log-file") {
@@ -147,6 +151,7 @@ int main(int argc, char** argv) {
         serverConfig.ollamaPort = ollamaConfig.port;
         serverConfig.defaultModel = ollamaConfig.model;
         serverConfig.webRoot = webRoot.empty() ? ResolveDefaultWebRoot(argv[0]) : webRoot;
+        serverConfig.memoryFilePath = memoryFilePath;
 
         if (serverConfig.webRoot.empty()) {
             spdlog::warn(

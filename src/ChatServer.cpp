@@ -1,5 +1,7 @@
 #include "cppcoder/ChatServer.h"
 
+#include "cppcoder/FactExtractor.h"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -10,7 +12,8 @@ namespace cppcoder {
 
 using json = nlohmann::json;
 
-ChatServer::ChatServer(ChatServerConfig config) : config_(std::move(config)) {}
+ChatServer::ChatServer(ChatServerConfig config)
+    : config_(std::move(config)), memory_(config_.memoryFilePath) {}
 
 int ChatServer::Run() {
     httplib::Server svr;
@@ -53,11 +56,60 @@ int ChatServer::Run() {
         res.set_content(body.dump(), "application/json");
     });
 
+    // GET /api/memory -- list every fact remembered about the user so far.
+    svr.Get("/api/memory", [this](const httplib::Request&, httplib::Response& res) {
+        json body;
+        body["facts"] = memory_.AllFacts();
+        res.set_content(body.dump(), "application/json");
+    });
+
+    // POST /api/memory -- manually add a fact (body: {"fact": "..."}),
+    // for corrections or facts the auto-extractor wouldn't catch.
+    svr.Post("/api/memory", [this](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const json::exception& e) {
+            res.status = 400;
+            res.set_content(json{{"error", std::string("invalid JSON body: ") + e.what()}}.dump(),
+                             "application/json");
+            return;
+        }
+        memory_.AddFact(in.value("fact", std::string{}));
+        json body;
+        body["facts"] = memory_.AllFacts();
+        res.set_content(body.dump(), "application/json");
+    });
+
+    // DELETE /api/memory -- forget a fact (body: {"fact": "..."}), exact
+    // match case-insensitively.
+    svr.Delete("/api/memory", [this](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const json::exception& e) {
+            res.status = 400;
+            res.set_content(json{{"error", std::string("invalid JSON body: ") + e.what()}}.dump(),
+                             "application/json");
+            return;
+        }
+        memory_.RemoveFact(in.value("fact", std::string{}));
+        json body;
+        body["facts"] = memory_.AllFacts();
+        res.set_content(body.dump(), "application/json");
+    });
+
     // POST /api/chat -- plain conversational chat, no research engine
     // involved. Proxies straight through to Ollama's own /api/chat and
     // streams the newline-delimited JSON response back to the browser as
     // it arrives, so the reply appears token-by-token like a normal chat
     // client. Body in: {"model": "...", "messages": [{"role","content"}]}.
+    //
+    // Also where remembered facts get read and written: the latest user
+    // message is scanned for new facts (FactExtractor) before the request
+    // goes out, and every fact known so far is prepended as a system
+    // message so the assistant has them regardless of which model is
+    // selected or whether this is a brand new conversation.
     svr.Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
         json in;
         try {
@@ -69,9 +121,28 @@ int ChatServer::Run() {
             return;
         }
 
+        json messages = in.value("messages", json::array());
+
+        if (!messages.empty() && messages.back().value("role", std::string{}) == "user") {
+            std::string latest = messages.back().value("content", std::string{});
+            for (const auto& fact : ExtractFacts(latest)) {
+                memory_.AddFact(fact);
+            }
+        }
+
+        auto facts = memory_.AllFacts();
+        if (!facts.empty()) {
+            std::string systemContent =
+                "Known facts about the user, remembered from earlier conversations:\n";
+            for (const auto& fact : facts) {
+                systemContent += "- " + fact + "\n";
+            }
+            messages.insert(messages.begin(), json{{"role", "system"}, {"content", systemContent}});
+        }
+
         json out;
         out["model"] = in.value("model", config_.defaultModel);
-        out["messages"] = in.value("messages", json::array());
+        out["messages"] = messages;
         out["stream"] = true;
 
         res.set_chunked_content_provider(

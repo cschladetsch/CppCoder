@@ -7,10 +7,35 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+// setenv/unsetenv are POSIX-only; MSVC's CRT (including under clang-cl)
+// doesn't provide them at all. _putenv_s is the portable-on-Windows
+// equivalent, and passing "" as the value removes the variable, matching
+// unsetenv's effect -- ResolveModelHomeInternal() already treats an empty
+// override as "not set" too, so behavior stays identical either way.
+void SetEnvVar(const char* name, const std::string& value) {
+#if defined(_WIN32)
+  _putenv_s(name, value.c_str());
+#else
+  ::setenv(name, value.c_str(), 1);
+#endif
+}
+
+void UnsetEnvVar(const char* name) {
+#if defined(_WIN32)
+  _putenv_s(name, "");
+#else
+  ::unsetenv(name);
+#endif
+}
+
+}  // namespace
+
 TEST(ModelStoreTests, ResolveAndCreate) {
   const char* kEnv = "DEEPSEEK_MODEL_HOME";
   const std::string base = "/tmp/deepseek_models_test";
-  ::setenv(kEnv, base.c_str(), 1);
+  SetEnvVar(kEnv, base);
 
   const std::string model = "deepseek-r1";
   const std::string expected = base + "/" + model;
@@ -25,7 +50,7 @@ TEST(ModelStoreTests, ResolveAndCreate) {
   fs::remove_all(base, ec);
   EXPECT_FALSE(ec);
 
-  ::unsetenv(kEnv);
+  UnsetEnvVar(kEnv);
 }
 
 TEST(ModelStoreTests, SanitizesColonsInModelNameForWindowsCompatibility) {
@@ -35,7 +60,7 @@ TEST(ModelStoreTests, SanitizesColonsInModelNameForWindowsCompatibility) {
   // resulting path is a real, creatable directory on every platform.
   const char* kEnv = "DEEPSEEK_MODEL_HOME";
   const std::string base = "/tmp/deepseek_models_test_colon";
-  ::setenv(kEnv, base.c_str(), 1);
+  SetEnvVar(kEnv, base);
 
   const std::string model = "qwen2.5-coder:7b";
   const std::string expected = base + "/qwen2.5-coder_7b";
@@ -50,5 +75,5 @@ TEST(ModelStoreTests, SanitizesColonsInModelNameForWindowsCompatibility) {
   fs::remove_all(base, ec);
   EXPECT_FALSE(ec);
 
-  ::unsetenv(kEnv);
+  UnsetEnvVar(kEnv);
 }

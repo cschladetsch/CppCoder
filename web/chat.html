@@ -168,6 +168,61 @@
   .status.ok .dot { background: var(--green-bright); box-shadow: 0 0 6px var(--green-bright); }
   .status.err .dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
 
+  /* ---------- Memory panel ---------- */
+
+  .memory-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+
+  .memory-empty {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    padding: 4px 2px;
+  }
+
+  .memory-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-soft);
+    background: var(--panel-2);
+    margin-bottom: 6px;
+  }
+  .memory-item span { flex: 1; }
+  .memory-item button {
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--red);
+    border-color: rgba(239,68,68,0.3);
+    background: var(--red-soft);
+  }
+  .memory-item button:hover { border-color: var(--red); }
+
+  .memory-add {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .memory-add input {
+    flex: 1;
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 10px;
+  }
+  .memory-add input:focus-visible { outline: 2px solid var(--blue-bright); outline-offset: 1px; }
+
   /* ---------- Chat area ---------- */
 
   .chat-panel {
@@ -323,7 +378,16 @@
     </select>
     <button id="btnRefreshModels" title="Re-fetch model list from Ollama">↻ Refresh</button>
     <button id="btnNewChat">New chat</button>
+    <button id="btnMemory" title="Facts remembered about you, persisted server-side">🧠 Memory (<span id="memoryCount">0</span>)</button>
     <div class="status" id="statusBar"><span class="dot"></span><span id="statusText">Connecting…</span></div>
+  </div>
+
+  <div class="memory-panel" id="memoryPanel" style="display:none">
+    <div id="memoryList"></div>
+    <div class="memory-add">
+      <input type="text" id="memoryInput" placeholder="Add a fact manually… (e.g. My name is Christian)">
+      <button id="btnMemoryAdd">Add</button>
+    </div>
   </div>
 
   <div class="chat-panel">
@@ -360,6 +424,12 @@
   const statusText = document.getElementById("statusText");
   const input = document.getElementById("input");
   const btnSend = document.getElementById("btnSend");
+  const btnMemory = document.getElementById("btnMemory");
+  const memoryPanel = document.getElementById("memoryPanel");
+  const memoryList = document.getElementById("memoryList");
+  const memoryCount = document.getElementById("memoryCount");
+  const memoryInput = document.getElementById("memoryInput");
+  const btnMemoryAdd = document.getElementById("btnMemoryAdd");
 
   /** @type {{role: string, content: string}[]} */
   let history = [];
@@ -463,6 +533,84 @@
     }
   }
 
+  // ---------------- Memory (facts remembered about the user) ----------------
+  // Facts are auto-detected server-side from what you type (see
+  // FactExtractor.cpp) and persisted to ~/.models/memory.json. This panel
+  // is just visibility + manual correction; it doesn't drive the auto-
+  // detection itself.
+
+  async function loadMemory() {
+    try {
+      const res = await fetch("/api/memory");
+      const data = await res.json();
+      const facts = data.facts || [];
+      memoryCount.textContent = String(facts.length);
+      renderMemoryList(facts);
+      return facts;
+    } catch (e) {
+      memoryCount.textContent = "?";
+      return [];
+    }
+  }
+
+  function renderMemoryList(facts) {
+    memoryList.innerHTML = "";
+    if (facts.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "memory-empty";
+      empty.textContent = "Nothing remembered yet. Facts you mention in chat (\"my name is...\", \"I am NN yo\") are picked up automatically, or add one below.";
+      memoryList.appendChild(empty);
+      return;
+    }
+    for (const fact of facts) {
+      const row = document.createElement("div");
+      row.className = "memory-item";
+      const span = document.createElement("span");
+      span.textContent = fact;
+      const del = document.createElement("button");
+      del.textContent = "Forget";
+      del.addEventListener("click", async function () {
+        await fetch("/api/memory", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fact: fact }),
+        });
+        loadMemory();
+      });
+      row.appendChild(span);
+      row.appendChild(del);
+      memoryList.appendChild(row);
+    }
+  }
+
+  btnMemory.addEventListener("click", function () {
+    const showing = memoryPanel.style.display !== "none";
+    if (showing) {
+      memoryPanel.style.display = "none";
+    } else {
+      memoryPanel.style.display = "block";
+      loadMemory();
+    }
+  });
+
+  btnMemoryAdd.addEventListener("click", async function () {
+    const fact = memoryInput.value.trim();
+    if (!fact) return;
+    memoryInput.value = "";
+    await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fact: fact }),
+    });
+    loadMemory();
+  });
+  memoryInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      btnMemoryAdd.click();
+    }
+  });
+
   modelSelect.addEventListener("change", function () {
     localStorage.setItem(MODEL_KEY, modelSelect.value);
   });
@@ -562,6 +710,7 @@
         history.push({ role: "assistant", content: assistantContent });
         saveHistory();
         setStatus("ok", "Ready");
+        loadMemory();  // the server may have auto-extracted a new fact from what you just sent
       } else {
         setStatus("err", "Ollama request failed");
       }
@@ -580,6 +729,7 @@
   loadHistory();
   renderAll();
   loadModels();
+  loadMemory();
 })();
 </script>
 </body>
