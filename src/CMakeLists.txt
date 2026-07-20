@@ -7,6 +7,9 @@ add_library(cppcoder_core
     Judge.cpp
     TaskQueue.cpp
     ResearchEngine.cpp
+    Editor.cpp
+    PatchApplier.cpp
+    EditEngine.cpp
     ChatServer.cpp
     MemoryStore.cpp
     FactExtractor.cpp

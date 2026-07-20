@@ -29,13 +29,6 @@ struct ResearchResult {
     std::string terminationReason;
 };
 
-// Receives one already-serialized JSON object (no trailing newline) per
-// engine event: {"event":"keywords_extracted",...}, {"event":"task_queued",...},
-// {"event":"task_started",...}, {"event":"worker_result",...},
-// {"event":"judge_result",...}, {"event":"complete",...}. Intended to be
-// written as JSON Lines for the web UI (see web/index.html) to replay.
-using EventSink = std::function<void(const std::string&)>;
-
 // Pure keyword fallback used when the model's own keyword extraction
 // fails or returns nothing usable. Public/free so it is directly
 // unit testable.

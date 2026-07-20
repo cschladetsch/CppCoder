@@ -10,6 +10,9 @@ add_executable(cppcoder_tests
     WorkerTests.cpp
     JudgeTests.cpp
     ResearchEngineTests.cpp
+    EditorTests.cpp
+    PatchApplierTests.cpp
+    EditEngineTests.cpp
     MemoryStoreTests.cpp
     FactExtractorTests.cpp
 )

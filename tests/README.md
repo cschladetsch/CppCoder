@@ -1,6 +1,6 @@
 # tests/
 
-105 GoogleTest cases, all offline -- nothing here needs a running Ollama
+133 GoogleTest cases, all offline -- nothing here needs a running Ollama
 instance. Everything that would normally require the network is tested
 by calling a pure/static parsing function directly with a canned model
 response (see `include/cppcoder/README.md`'s "pure-function testability"
@@ -30,6 +30,9 @@ ctest -E 'ModelStoreTests|StreamParserTests'
 | `WorkerTests.cpp` | 13 | `ParseWorkerResponse`: all three outcomes, malformed/prose-wrapped/empty responses, direction-id generation. |
 | `JudgeTests.cpp` | 12 | `ApplyJudgeResponse`: direction pruning by index, summary filtering, outcome downgrade when nothing survives, malformed/truncated judge JSON. |
 | `ResearchEngineTests.cpp` | 11 | `FallbackKeywords` (stopwords, casing, short-word filtering) and `SeedInitialTasks` (dedup across keyword matches). |
+| `EditorTests.cpp` | 15 | `ParseEditResponse`: all three outcomes, edits/directions parsing, malformed/prose-wrapped/empty responses, path-less edits filtered. |
+| `PatchApplierTests.cpp` | 8 | `Apply`: overwrite/create/parent-dir-creation, path-traversal and absolute-path rejection, multi-edit batches, empty input. |
+| `EditEngineTests.cpp` | 5 | `SeedInitialTasks` (same dedup/merge expectations as `ResearchEngineTests.cpp`), `EditEngineConfig` dry-run default. |
 | `MemoryStoreTests.cpp` | 9 | Persistence round-trip, case-insensitive add-dedup, remove, empty/whitespace rejection, `ResolveDefaultPath` env-var precedence. |
 | `FactExtractorTests.cpp` | 8 | Name/age regex patterns (with and without "is"), assistant-name phrasing, multi-fact messages, no-match cases. |
 
@@ -45,6 +48,9 @@ flowchart TD
         WorkerTests["WorkerTests.cpp (13)"]
         JudgeTests["JudgeTests.cpp (12)"]
         ResearchEngineTests["ResearchEngineTests.cpp (11)"]
+        EditorTests["EditorTests.cpp (15)"]
+        PatchApplierTests["PatchApplierTests.cpp (8)"]
+        EditEngineTests["EditEngineTests.cpp (5)"]
         MemoryStoreTests["MemoryStoreTests.cpp (9)"]
         FactExtractorTests["FactExtractorTests.cpp (8)"]
     end
@@ -66,6 +72,11 @@ flowchart TD
 - New research-engine parsing edge case → extend `WorkerTests.cpp` or
   `JudgeTests.cpp` against `ParseWorkerResponse`/`ApplyJudgeResponse`
   directly; don't spin up `OllamaClient`.
+- New edit-mode parsing edge case → extend `EditorTests.cpp` against
+  `Editor::ParseEditResponse` directly, same pure-function convention.
+  Filesystem-touching edit-mode logic (`PatchApplier::Apply`) uses the
+  `CodebaseScannerTest`-style temp-dir fixture instead -- see
+  `PatchApplierTests.cpp`.
 - New `FactExtractor` phrasing → add both the regex (in
   `src/FactExtractor.cpp`) and a case in `FactExtractorTests.cpp` in the
   same change; the pattern table is small enough that a missing test is

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,34 @@ struct Finding {
     std::chrono::milliseconds duration{0};
     std::size_t promptTokensApprox = 0;
 };
+
+enum class EditOutcome {
+    Success,               // edits[] contains the complete change for this area
+    NoChangeNeeded,        // area investigated, nothing to change here
+    PartialWithDirections  // edits[] may be non-empty; more areas need changes too
+};
+
+struct ProposedEdit {
+    std::string path;         // relative to codebase root
+    std::string newContent;   // full replacement content for the file
+    std::string description;  // short human-readable summary of the change
+};
+
+struct EditFinding {
+    EditOutcome outcome = EditOutcome::NoChangeNeeded;
+    std::string areaInvestigated;
+    std::string summary;
+    std::vector<ProposedEdit> edits;
+    std::vector<Task> suggestedDirections;
+    std::chrono::milliseconds duration{0};
+    std::size_t promptTokensApprox = 0;
+};
+
+// Receives one already-serialized JSON object (no trailing newline) per
+// engine event, e.g. {"event":"task_queued",...}. Shared by ResearchEngine
+// and EditEngine. Intended to be written as JSON Lines for the web UI
+// (see web/index.html) to replay.
+using EventSink = std::function<void(const std::string&)>;
 
 // Approximate token estimate. Good enough for budgeting against the
 // empirical 100-150K usable context window; not a real tokenizer.

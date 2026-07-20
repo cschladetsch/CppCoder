@@ -47,8 +47,19 @@
     Ollama model tag passed to cppcoder. Defaults to qwen2.5-coder:7b.
 
 .PARAMETER EventsFile
-    Path to write JSON-Lines engine events when -Question is given.
-    Defaults to build/last_run.jsonl.
+    Path to write JSON-Lines engine events when -Question or -Task is
+    given. Defaults to build/last_run.jsonl.
+
+.PARAMETER Task
+    If given, runs build/src/cppcoder in edit mode against -Codebase
+    with this change description after building. Proposed edits are
+    printed for review; pass -Apply to write them to disk. Ignored if
+    -Question is also given (research mode takes precedence).
+
+.PARAMETER Apply
+    Write edit mode's proposed changes to disk instead of just printing
+    them. Only meaningful with -Task. Run with a clean git working tree
+    so this is trivially revertible.
 
 .PARAMETER LogLevel
     Log level passed to cppcoder: trace|debug|info|warn|err|critical|off.
@@ -79,12 +90,17 @@
 .EXAMPLE
     ./r.ps1
     Init submodules (if needed), configure with clang-cl on Windows
-    (auto), build, run all 88 tests.
+    (auto), build, run all 133 tests.
 
 .EXAMPLE
     ./r.ps1 -Question "How does the judge prune directions?" -Codebase .
     Build, then run cppcoder with that question against this repo,
     writing events to build/last_run.jsonl.
+
+.EXAMPLE
+    ./r.ps1 -Task "Fix the typo in README.md" -Codebase .
+    Build, then propose an edit against this repo. Nothing is written
+    to disk -- add -Apply to actually write the proposed changes.
 
 .EXAMPLE
     ./r.ps1 -SkipBuild -OpenWeb
@@ -110,6 +126,8 @@ param(
     [string]$Compiler = 'auto',
 
     [string]$Question,
+    [string]$Task,
+    [switch]$Apply,
     [string]$Codebase = $PSScriptRoot,
     [string]$Model = 'qwen2.5-coder:7b',
     [string]$EventsFile,
@@ -414,6 +432,30 @@ if ($Question) {
     Write-Step "Events written to $EventsFile (load it in web/index.html to visualize)"
     if ($exitCode -ne 0) {
         Write-Warning "cppcoder exited with code $exitCode (no answer found -- see output above)"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 4b. Optional: propose (or apply) an edit
+# ---------------------------------------------------------------------------
+if ($Task -and -not $Question) {
+    $exe = Find-CppCoderExe
+
+    if (-not $EventsFile) {
+        $EventsFile = Join-Path 'build' 'last_run.jsonl'
+    }
+
+    $modeLabel = if ($Apply) { 'Applying' } else { 'Proposing (dry-run)' }
+    Write-Step "$modeLabel edit: $Task"
+    $editArgs = @('--task', $Task, '--codebase', $Codebase, '--model', $Model,
+                  '--events-file', $EventsFile, '--log-level', $LogLevel)
+    if ($Apply) { $editArgs += '--apply' }
+    & $exe @editArgs
+    $exitCode = $LASTEXITCODE
+
+    Write-Step "Events written to $EventsFile (load it in web/index.html to visualize)"
+    if ($exitCode -ne 0) {
+        Write-Warning "cppcoder exited with code $exitCode (no edits produced -- see output above)"
     }
 }
 

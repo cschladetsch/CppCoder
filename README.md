@@ -1,7 +1,7 @@
 # CppLocalLlmCodeAssist
 
 A C++23 toolkit for working with a small local LLM (via [Ollama](https://ollama.com))
-against a large codebase, in two modes:
+against a large codebase, in three modes:
 
 - **Research mode** (`cppcoder --question ... --codebase ...`): a
   sustained-research engine that implements the worker/judge/task-queue
@@ -11,6 +11,12 @@ against a large codebase, in two modes:
   of bounded research tasks that the model works through one at a time,
   with a second model pass acting as a judge that prunes anything
   off-topic before it re-enters the queue.
+- **Edit mode** (`cppcoder --task ... --codebase ... [--apply]`): the
+  same keyword-seeded task-queue architecture as research mode, but
+  driving an editor instead of a researcher -- the model proposes full
+  replacement content for the files a task touches, which are printed
+  for review (the default) or written to disk with `--apply`. See
+  [Edit mode](#edit-mode) below.
 - **Chat mode** (`cppcoder --serve`): a plain, "Claude for Desktop"-style
   web chat UI backed by the same Ollama instance, with swappable models
   and a small persisted-facts memory. See [Chat mode](#chat-mode) below.
@@ -158,6 +164,9 @@ flowchart TD
         Judge
         TaskQueue
         ResearchEngine
+        Editor
+        PatchApplier
+        EditEngine
         ChatServer
         MemoryStore
         FactExtractor
@@ -170,6 +179,12 @@ flowchart TD
     ResearchEngine --> Judge
     ResearchEngine --> TaskQueue
     ResearchEngine --> CodebaseScanner
+    Editor --> OllamaClient
+    Editor --> CodebaseScanner
+    EditEngine --> Editor
+    EditEngine --> PatchApplier
+    EditEngine --> TaskQueue
+    EditEngine --> CodebaseScanner
     ChatServer --> MemoryStore
     ChatServer --> FactExtractor
     ChatServer --> HTTPLIB[("cpp-httplib (server)")]
@@ -178,7 +193,7 @@ flowchart TD
     core --> NJ[("nlohmann_json")]
     OllamaClient --> HTTPLIB2[("cpp-httplib (client)")]
 
-    CLI["cppcoder (CLI / --serve)"] --> core
+    CLI["cppcoder (CLI / --serve / --task)"] --> core
     ReplayDemo["replay_demo"] --> NJ
     MinimalUsage["minimal_usage"] --> core
     Tests["cppcoder_tests"] --> core
@@ -196,7 +211,7 @@ flowchart TD
 CppCoder/
 ├── include/cppcoder/     Public headers -- see include/cppcoder/README.md
 ├── src/                  Implementation + main.cpp -- see src/README.md
-├── tests/                105 GoogleTest cases -- see tests/README.md
+├── tests/                133 GoogleTest cases -- see tests/README.md
 ├── examples/             replay_demo, minimal_usage -- see examples/README.md
 ├── web/                  index.html + chat.html -- see web/README.md
 └── external/             git submodules: CppLmmModelStore, spdlog, googletest
@@ -205,13 +220,15 @@ CppCoder/
 ## Quick start
 
 `t.ps1` is the main entry point (PowerShell 7+, cross-platform):
-initializes submodules if needed, configures, builds, and runs all 105
+initializes submodules if needed, configures, builds, and runs all 133
 tests in one command.
 
 ```
 ./t.ps1                                              # init + build + test
 ./t.ps1 -Clean -Jobs 8                                # full rebuild, 8 jobs
 ./t.ps1 -Question "How does the judge prune?" -Codebase .   # build, then research
+./t.ps1 -Task "Fix the typo in README.md" -Codebase .        # build, then propose an edit (dry-run)
+./t.ps1 -Task "Fix the typo in README.md" -Codebase . -Apply  # ...and write it to disk
 ./t.ps1 -SkipBuild -OpenWeb                           # just open the task-graph UI
 ./t.ps1 -Serve                                        # build, then start the chat UI
 ```
@@ -293,6 +310,44 @@ ollama pull qwen2.5-coder:7b
 | `--log-level <level>` | `info` | `trace\|debug\|info\|warn\|err\|critical\|off` |
 | `--log-file <path>` | *(none)* | Also write logs to this file |
 
+## Edit mode
+
+```
+ollama pull qwen2.5-coder:7b
+./build/src/cppcoder --task "Add a doc comment to Frobnicate()" --codebase /path/to/repo
+./build/src/cppcoder --task "Add a doc comment to Frobnicate()" --codebase /path/to/repo --apply
+```
+
+Edit mode reuses the same keyword-seeded task-queue loop as research
+mode (`EditEngine`, mirroring `ResearchEngine`), but drives an `Editor`
+instead of a `Worker`/`Judge` pair: the model is asked to return the
+**complete new content of each file it changes**, not a diff. That's a
+deliberate trade-off -- more tokens per edit, and the model has to
+faithfully reproduce untouched parts of larger files -- in exchange for
+not needing any diff/patch-matching logic, which is also where a small
+local model is most likely to produce output that silently corrupts a
+file if trusted blindly.
+
+**Nothing is written to disk unless you pass `--apply`.** Without it,
+proposed edits are printed to stdout for review only. With it, each
+edit is applied via `PatchApplier` as soon as it's produced (so a
+multi-file task sees its own earlier edits when it re-scans later
+areas), and the run report lists what was written, rejected (a path
+that resolved outside `--codebase`), or hit an I/O error. Run with a
+clean git working tree so `--apply` is always trivially revertible --
+edit mode doesn't check this for you, the same advisory-only philosophy
+`main.cpp` already uses for `IsModelAvailable`/`ModelExists`.
+
+| Option | Default | Description |
+|---|---|---|
+| `--task <text>` | *(required)* | Change to make |
+| `--codebase <path>` | *(required)* | Root of the codebase to change |
+| `--apply` | *(off, dry-run)* | Write proposed edits to disk instead of just printing them |
+| `--model` / `--host` / `--port` | same as research mode | Ollama connection |
+| `--max-minutes` / `--max-iterations` / `--token-budget` | same as research mode | Loop budgets |
+| `--events-file <path>` | *(none)* | JSON-Lines events: `task`, `keywords_extracted`, `task_queued`, `task_started`, `edit_result`, `edit_proposed`/`edit_applied`/`edit_rejected`, `complete` |
+| `--log-level` / `--log-file` | same as research mode | Logging |
+
 ## Chat mode
 
 `cppcoder --serve` (or `./r.ps1`) starts a plain conversational chat UI
@@ -358,12 +413,13 @@ diagnostic logging.
 
 ## Test
 
-105 tests in `cppcoder_tests` (this repo's own suite) plus 3 more inside
+133 tests in `cppcoder_tests` (this repo's own suite) plus 3 more inside
 the `external/CppLmmModelStore` submodule (`ModelStoreTests`,
-`StreamParserTests`) -- 108 total, all pure/offline. The network-facing
+`StreamParserTests`) -- 136 total, all pure/offline. The network-facing
 parts are tested via pure functions -- `Worker::ParseWorkerResponse`,
-`Judge::ApplyJudgeResponse`, `FallbackKeywords`, `ResearchEngine::SeedInitialTasks`
--- so none of it needs a running Ollama instance:
+`Judge::ApplyJudgeResponse`, `Editor::ParseEditResponse`, `FallbackKeywords`,
+`ResearchEngine::SeedInitialTasks`, `EditEngine::SeedInitialTasks` --
+so none of it needs a running Ollama instance:
 
 ```
 cd build && ctest --output-on-failure
@@ -378,6 +434,9 @@ cd build && ctest --output-on-failure
 | `WorkerTests.cpp` | 13 | Worker JSON response parsing, malformed/prose-wrapped input |
 | `JudgeTests.cpp` | 12 | Direction pruning, summary filtering, outcome downgrade |
 | `ResearchEngineTests.cpp` | 11 | Keyword fallback, seed-task construction |
+| `EditorTests.cpp` | 15 | Editor JSON response parsing, edits/directions, malformed/prose-wrapped input |
+| `PatchApplierTests.cpp` | 8 | File writes, path-traversal/absolute-path rejection, multi-edit batches |
+| `EditEngineTests.cpp` | 5 | Seed-task construction (edit mode), dry-run default |
 | `MemoryStoreTests.cpp` | 9 | Persistence, case-insensitive dedup, remove, default-path resolution |
 | `FactExtractorTests.cpp` | 8 | Name/age extraction patterns, multi-fact messages, no-match cases |
 

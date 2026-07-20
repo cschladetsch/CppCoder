@@ -1,5 +1,6 @@
 #include "cppcoder/ChatServer.h"
 #include "cppcoder/CodebaseScanner.h"
+#include "cppcoder/EditEngine.h"
 #include "cppcoder/Logging.h"
 #include "cppcoder/OllamaClient.h"
 #include "cppcoder/ResearchEngine.h"
@@ -19,6 +20,7 @@ namespace {
 void PrintUsage(const char* argv0) {
     std::cerr
         << "Usage: " << argv0 << " --question \"...\" --codebase <path> [options]\n"
+        << "   or: " << argv0 << " --task \"...\" --codebase <path> [--apply] [options]\n"
         << "   or: " << argv0 << " --serve [options]\n"
         << "\n"
         << "Research mode options:\n"
@@ -28,6 +30,10 @@ void PrintUsage(const char* argv0) {
         << "  --max-iterations <n>     Max task loop iterations (default: 200)\n"
         << "  --token-budget <n>       Approx tokens per task (default: 120000)\n"
         << "  --events-file <path>     Write JSON-lines engine events for the web UI\n"
+        << "\n"
+        << "Edit mode options:\n"
+        << "  --task \"...\"             Change to make (implies edit mode; requires --codebase)\n"
+        << "  --apply                  Write proposed edits to disk (default: dry-run, propose only)\n"
         << "\n"
         << "Chat server mode options:\n"
         << "  --serve                  Start the web chat UI + API instead of researching\n"
@@ -76,6 +82,8 @@ std::string ResolveDefaultWebRoot(const char* argv0) {
 
 int main(int argc, char** argv) {
     std::string question;
+    std::string task;
+    bool applyEdits = false;
     std::string codebasePath;
     std::string eventsFilePath;
     std::string logLevel = "info";
@@ -117,6 +125,10 @@ int main(int argc, char** argv) {
             engineConfig.tokenBudgetPerTask = std::stoull(next("--token-budget"));
         } else if (arg == "--events-file") {
             eventsFilePath = next("--events-file");
+        } else if (arg == "--task") {
+            task = next("--task");
+        } else if (arg == "--apply") {
+            applyEdits = true;
         } else if (arg == "--serve") {
             serveMode = true;
         } else if (arg == "--serve-host") {
@@ -161,6 +173,105 @@ int main(int argc, char** argv) {
 
         cppcoder::ChatServer server(std::move(serverConfig));
         return server.Run();
+    }
+
+    if (!task.empty()) {
+        if (codebasePath.empty()) {
+            std::cerr << "--task requires --codebase\n";
+            PrintUsage(argv[0]);
+            return 1;
+        }
+
+        if (!deepseek::ModelStore::ModelExists(ollamaConfig.model)) {
+            spdlog::info(
+                "'{}' not found under shared model store ({}). Continuing -- Ollama manages "
+                "its own model storage separately.",
+                ollamaConfig.model, deepseek::ModelStore::ResolveModelPath(ollamaConfig.model));
+        }
+
+        cppcoder::OllamaClient client(ollamaConfig);
+        if (!client.IsModelAvailable()) {
+            spdlog::warn(
+                "Ollama at {}:{} does not report model '{}' as available. Run `ollama pull {}` "
+                "first. Continuing anyway.",
+                ollamaConfig.host, ollamaConfig.port, ollamaConfig.model, ollamaConfig.model);
+        }
+
+        cppcoder::CodebaseScanner scanner(codebasePath);
+        cppcoder::EditEngineConfig editEngineConfig;
+        editEngineConfig.tokenBudgetPerTask = engineConfig.tokenBudgetPerTask;
+        editEngineConfig.maxIterations = engineConfig.maxIterations;
+        editEngineConfig.maxWallClock = engineConfig.maxWallClock;
+        editEngineConfig.maxInitialKeywords = engineConfig.maxInitialKeywords;
+        editEngineConfig.apply = applyEdits;
+
+        cppcoder::EditEngine engine(std::move(client), std::move(scanner), codebasePath,
+                                     editEngineConfig);
+
+        std::ofstream eventsFile;
+        if (!eventsFilePath.empty()) {
+            eventsFile.open(eventsFilePath, std::ios::out | std::ios::trunc);
+            if (!eventsFile) {
+                spdlog::warn("Could not open events file '{}' for writing; continuing without "
+                             "event output.",
+                             eventsFilePath);
+            } else {
+                engine.SetEventSink([&eventsFile](const std::string& line) {
+                    eventsFile << line << "\n";
+                    eventsFile.flush();
+                });
+            }
+        }
+
+        if (applyEdits) {
+            spdlog::warn(
+                "Editing WITH --apply: changes will be written to '{}'. Make sure your "
+                "working tree is clean so this is easy to revert.",
+                codebasePath);
+        } else {
+            spdlog::info("Editing (dry-run; pass --apply to write changes): {}", task);
+        }
+        cppcoder::EditRunResult result = engine.Run(task);
+
+        std::cout << "\n=== Edit run complete ===\n"
+                  << "Mode: " << (applyEdits ? "apply" : "dry-run") << "\n"
+                  << "Termination: " << result.terminationReason << "\n"
+                  << "Iterations: " << result.iterationsRun << "\n"
+                  << "Wall clock: " << result.wallClock.count() << " ms\n\n";
+
+        if (applyEdits) {
+            std::cout << "Written (" << result.applyOutcome.writtenPaths.size() << "):\n";
+            for (const auto& p : result.applyOutcome.writtenPaths) {
+                std::cout << "  " << p << "\n";
+            }
+            if (!result.applyOutcome.rejectedPaths.empty()) {
+                std::cout << "\nRejected (" << result.applyOutcome.rejectedPaths.size()
+                          << "):\n";
+                for (const auto& p : result.applyOutcome.rejectedPaths) {
+                    std::cout << "  " << p << "\n";
+                }
+            }
+            if (!result.applyOutcome.errors.empty()) {
+                std::cout << "\nErrors (" << result.applyOutcome.errors.size() << "):\n";
+                for (const auto& e : result.applyOutcome.errors) {
+                    std::cout << "  " << e << "\n";
+                }
+            }
+        } else if (result.proposedEdits.empty()) {
+            std::cout << "No edits proposed.\n";
+        } else {
+            std::cout << "Proposed edits (" << result.proposedEdits.size()
+                      << ") -- rerun with --apply to write them:\n\n";
+            for (const auto& e : result.proposedEdits) {
+                std::cout << "--- " << e.path << " ---\n";
+                if (!e.description.empty()) {
+                    std::cout << "(" << e.description << ")\n";
+                }
+                std::cout << e.newContent << "\n\n";
+            }
+        }
+
+        return result.anyEdits ? 0 : 2;
     }
 
     if (question.empty() || codebasePath.empty()) {
